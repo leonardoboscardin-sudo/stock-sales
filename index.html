@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stock Commerciali — Consultazione Giacenze</title>
+    <!-- Font Inter per massima leggibilità -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PapaParse per parsing CSV affidabile (virgole, punti e virgola, virgolette) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <!-- SheetJS (XLSX) per consentire anche il test diretto con file Excel .xlsx/.xls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        navy: {
+                            800: '#1E3A5F',
+                            900: '#152A45',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Ottimizzazione scrollbar e comportamento mobile app-like */
+        body {
+            background-color: #E2E8F0;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Nascondi scrollbar orizzontale nei filtri a pillola */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* Animazione Bottom Sheet / Modale */
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0.5; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-up {
+            animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+    </style>
+</head>
+<body class="font-sans text-slate-800 antialiased flex justify-center min-h-screen">
+
+    <!-- Contenitore principale Mobile-First (a schermo intero su mobile, cornice app su desktop) -->
+    <div id="app-shell" class="w-full max-w-md bg-[#F4F6F9] min-h-screen flex flex-col shadow-2xl relative overflow-x-hidden">
+
+        <!-- HEADER FISSO IN ALTO (Stile Glide) -->
+        <header class="sticky top-0 z-30 bg-[#1E3A5F] text-white shadow-md">
+            <div class="px-4 pt-3.5 pb-2.5 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <!-- Icona Magazzino SVG -->
+                    <div class="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-bold leading-tight tracking-tight">Stock Commerciali</h1>
+                        <div class="flex items-center gap-1.5 mt-0.5">
+                            <span id="total-count-badge" class="text-[11px] font-medium bg-white/15 text-blue-100 px-2 py-0.5 rounded-full">
+                                Caricamento...
+                            </span>
+                            <span id="last-sync-label" class="text-[10px] text-blue-200/80"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Azioni Header: Configura & Sync -->
+                <div class="flex items-center gap-1.5">
+                    <button onclick="openConfigModal()" title="Configura sorgente dati" class="p-2 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 transition text-white">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                    </button>
+                    <button id="sync-btn" onclick="syncData(true)" title="Aggiorna giacenze" class="flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 transition text-xs font-semibold">
+                        <svg id="sync-icon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        <span>Sync</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- BARRA DI RICERCA ISTANTANEA -->
+            <div class="px-4 pb-3">
+                <div class="relative flex items-center">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                    <input 
+                        type="text" 
+                        id="search-input" 
+                        placeholder="Cerca codice o descrizione..." 
+                        autocomplete="off"
+                        autocorrect="off"
+                        spellcheck="false"
+                        class="w-full bg-white text-slate-900 placeholder-slate-400 text-sm rounded-xl pl-10 pr-9 py-2.5 shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-400 transition"
+                    >
+                    <button 
+                        id="clear-search-btn" 
+                        onclick="clearSearch()" 
+                        aria-label="Cancella ricerca"
+                        class="hidden absolute right-2.5 w-6 h-6 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 flex items-center justify-center transition">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- FILTRI RAPIDI A PILLOLA -->
+        <div class="bg-[#F4F6F9]/95 backdrop-blur-sm sticky top-[106px] z-20 px-4 py-2.5 border-b border-slate-200/80">
+            <div class="flex items-center gap-2 overflow-x-auto no-scrollbar" id="filter-pills">
+                <button data-filter="all" onclick="setFilter('all')" class="filter-pill active whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-semibold transition bg-[#1E3A5F] text-white shadow-sm">
+                    Tutti
+                </button>
+                <button data-filter="available" onclick="setFilter('available')" class="filter-pill whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-medium transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    Disponibili (&gt;10)
+                </button>
+                <button data-filter="low" onclick="setFilter('low')" class="filter-pill whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-medium transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                    In esaurimento (1-10)
+                </button>
+                <button data-filter="out" onclick="setFilter('out')" class="filter-pill whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-medium transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                    Esauriti (0)
+                </button>
+            </div>
+        </div>
+
+        <!-- BANNER MODALITÀ DEMO (Visibile solo quando non è collegato un URL CSV reale) -->
+        <div id="demo-banner" class="hidden mx-4 mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-2 shadow-sm">
+            <div class="flex items-start gap-2">
+                <span class="text-amber-600 mt-0.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </span>
+                <p class="text-[11px] text-amber-900 leading-snug">
+                    <strong>Modalità Demo attiva</strong> (3.200 articoli simulati). Collega il tuo Google Sheet o carica un file Excel/CSV.
+                </p>
+            </div>
+            <button onclick="openConfigModal()" class="shrink-0 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg transition shadow-sm">
+                Configura
+            </button>
+        </div>
+
+        <!-- CONTATORE RISULTATI CORRENTI -->
+        <div class="px-4 pt-3 pb-1 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+            <span id="results-info">Mostrando 0 articoli</span>
+            <span id="source-indicator" class="text-slate-400">Sorgente: Demo locale</span>
+        </div>
+
+        <!-- LISTA PRODOTTI (Stile Glide List) -->
+        <main id="product-list" class="flex-1 px-4 py-2 space-y-2.5 pb-20">
+            <!-- Le card vengono generate dinamicamente via JS -->
+        </main>
+
+        <!-- PULSANTE CARICA ALTRI (Paginazione fluida per 3.000+ righe) -->
+        <div id="load-more-container" class="hidden px-4 pb-24 pt-1 text-center">
+            <button onclick="loadMoreItems()" class="w-full py-2.5 bg-white hover:bg-slate-50 active:scale-[0.99] text-[#1E3A5F] font-semibold text-xs rounded-xl border border-slate-200 shadow-sm transition">
+                Carica altri articoli...
+            </button>
+        </div>
+
+        <!-- STATO VUOTO (Nessun risultato trovato) -->
+        <div id="empty-state" class="hidden flex-1 flex flex-col items-center justify-center px-6 py-12 text-center">
+            <div class="w-14 h-14 rounded-2xl bg-slate-200/70 text-slate-400 flex items-center justify-center mb-3">
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+            </div>
+            <h3 class="text-sm font-bold text-slate-700">Nessun articolo trovato</h3>
+            <p class="text-xs text-slate-500 mt-1 max-w-[240px]">Prova a cercare un altro codice prodotto o rimuovi i filtri attivi.</p>
+            <button onclick="resetAllFilters()" class="mt-4 px-4 py-2 bg-[#1E3A5F] text-white text-xs font-semibold rounded-xl shadow-sm hover:bg-[#152A45] transition">
+                Mostra tutto il catalogo
+            </button>
+        </div>
+
+        <!-- MODALE / BOTTOM SHEET DETTAGLIO PRODOTTO -->
+        <div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-[2px]" onclick="closeDetailModal(event)">
+            <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl animate-slide-up" onclick="event.stopPropagation()">
+                <!-- Maniglia mobile -->
+                <div class="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-4 sm:hidden"></div>
+                
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Codice Articolo</span>
+                        <h2 id="modal-code" class="text-xl font-bold text-slate-900 mt-0.5 select-all">ART-00000</h2>
+                    </div>
+                    <button onclick="closeDetailModal()" class="p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Immagine opzionale se presente nel dataset -->
+                <div id="modal-image-wrapper" class="hidden mt-3 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 max-h-44 flex items-center justify-center">
+                    <img id="modal-image" src="" alt="Foto prodotto" class="object-contain max-h-44 w-full" onerror="this.parentElement.classList.add('hidden')">
+                </div>
+
+                <!-- Descrizione completa -->
+                <div class="mt-4 bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                    <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">Descrizione Prodotto</span>
+                    <p id="modal-desc" class="text-sm text-slate-800 leading-relaxed font-medium">Descrizione completa del prodotto</p>
+                </div>
+
+                <!-- Box Stato Giacenza -->
+                <div class="mt-3 grid grid-cols-2 gap-2.5">
+                    <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                        <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Giacenza Attuale</span>
+                        <div class="mt-1 flex items-baseline gap-1.5">
+                            <span id="modal-qty" class="text-2xl font-bold text-slate-900">0</span>
+                            <span id="modal-unit" class="text-xs font-semibold text-slate-500">PZ</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 flex flex-col justify-between">
+                        <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Stato Stock</span>
+                        <div id="modal-status-badge" class="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold w-fit">
+                            <!-- Riempito dinamicamente -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Azioni Bottom Sheet -->
+                <div class="mt-5 flex gap-2.5">
+                    <button id="copy-code-btn" onclick="copyProductCode()" class="flex-1 py-3 px-4 bg-[#1E3A5F] hover:bg-[#152A45] active:scale-[0.98] text-white font-semibold text-sm rounded-xl shadow-md transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                        </svg>
+                        <span>Copia Codice</span>
+                    </button>
+                    <button onclick="closeDetailModal()" class="py-3 px-5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-xl transition">
+                        Chiudi
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODALE CONFIGURAZIONE SORGENTE DATI (Google Sheet CSV / Upload Excel) -->
+        <div id="config-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 backdrop-blur-[2px]" onclick="closeConfigModal(event)">
+            <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <h2 class="text-base font-bold text-slate-900">Collegamento Dati Magazzino</h2>
+                    <button onclick="closeConfigModal()" class="p-1.5 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Opzione 1: Google Sheet CSV URL -->
+                <div class="mt-4">
+                    <label class="block text-xs font-bold text-slate-700 mb-1">1. Link CSV da Google Fogli (Consigliato)</label>
+                    <p class="text-[11px] text-slate-500 mb-2 leading-relaxed">
+                        Su Google Fogli vai su <strong>File &gt; Condividi &gt; Pubblica sul web</strong>, seleziona formato <strong>Valori separati da virgola (.csv)</strong> e incolla qui il link:
+                    </p>
+                    <input 
+                        type="url" 
+                        id="csv-url-input" 
+                        placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv" 
+                        class="w-full text-xs border border-slate-300 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]"
+                    >
+                    <button onclick="saveCsvUrl()" class="mt-2 w-full py-2.5 bg-[#1E3A5F] hover:bg-[#152A45] text-white font-semibold text-xs rounded-xl shadow-sm transition">
+                        Salva e Sincronizza Google Sheet
+                    </button>
+                </div>
+
+                <div class="my-4 flex items-center gap-3">
+                    <div class="h-px bg-slate-200 flex-1"></div>
+                    <span class="text-[10px] font-bold uppercase text-slate-400">oppure testa al volo</span>
+                    <div class="h-px bg-slate-200 flex-1"></div>
+                </div>
+
+                <!-- Opzione 2: Carica file Excel o CSV dal dispositivo -->
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">2. Carica file Excel (.xlsx) o CSV locale</label>
+                    <p class="text-[11px] text-slate-500 mb-2">
+                        Colonne attese: <code class="bg-slate-100 px-1 rounded">Codice</code>, <code class="bg-slate-100 px-1 rounded">Descrizione</code>, <code class="bg-slate-100 px-1 rounded">Giacenza</code> (opzionali: <code class="bg-slate-100 px-1 rounded">Unita_Misura</code>, <code class="bg-slate-100 px-1 rounded">Foto_URL</code>).
+                    </p>
+                    <label class="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-slate-300 hover:border-[#1E3A5F] rounded-xl cursor-pointer bg-slate-50 hover:bg-blue-50/30 transition">
+                        <div class="flex flex-col items-center justify-center pt-2 pb-2">
+                            <svg class="w-6 h-6 text-slate-400 mb-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                            </svg>
+                            <p class="text-xs font-semibold text-slate-600">Seleziona file Excel o CSV</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">.xlsx, .xls, .csv</p>
+                        </div>
+                        <input id="local-file-input" type="file" accept=".csv,.xlsx,.xls" class="hidden" onchange="handleLocalFileUpload(event)">
+                    </label>
+                </div>
+
+                <!-- Ripristina Demo -->
+                <div class="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                    <button onclick="resetToDemo()" class="text-xs font-medium text-rose-600 hover:underline">
+                        Ripristina catalogo demo
+                    </button>
+                    <button onclick="closeConfigModal()" class="text-xs font-semibold text-slate-600 px-3 py-1.5 rounded-lg bg-slate-100">
+                        Chiudi
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOAST NOTIFICA FLUTTUANTE (Al posto di alert()) -->
+        <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-medium px-4 py-2.5 rounded-full shadow-xl opacity-0 pointer-events-none transition-opacity duration-200 flex items-center gap-2">
+            <span id="toast-icon" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span id="toast-msg">Operazione completata</span>
+        </div>
+
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * CONFIGURAZIONE PRINCIPALE
+         * Incolla qui sotto il link CSV pubblicato da Google Fogli per renderlo
+         * predefinito per tutto il team commerciale senza configurazione manuale.
+         * ============================================================================
+         */
+        const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-yVAep-5Bkr30ZgTpGBEXBoNuufGy-ma_NwFoVIdMyZ3cri_-DaVMycF26TybWTtQdrxLhm9OjcaB/pub?gid=0&single=true&output=csv";
+
+        // Stato globale dell'applicazione
+        let allProducts = [];
+        let filteredProducts = [];
+        let currentFilter = 'all';
+        let searchQuery = '';
+        let renderedCount = 0;
+        const PAGE_SIZE = 80; // Carica 80 articoli alla volta per fluidità a 60fps anche su 3.000+ righe
+        let selectedProduct = null;
+
+        // Elementi DOM principali
+        const searchInput = document.getElementById('search-input');
+        const clearSearchBtn = document.getElementById('clear-search-btn');
+        const productListEl = document.getElementById('product-list');
+        const loadMoreContainer = document.getElementById('load-more-container');
+        const emptyStateEl = document.getElementById('empty-state');
+        const resultsInfoEl = document.getElementById('results-info');
+        const totalCountBadge = document.getElementById('total-count-badge');
+        const lastSyncLabel = document.getElementById('last-sync-label');
+        const demoBanner = document.getElementById('demo-banner');
+        const sourceIndicator = document.getElementById('source-indicator');
+
+        /**
+         * Inizializzazione all'avvio della pagina
+         */
+        window.addEventListener('DOMContentLoaded', () => {
+            setupEventListeners();
+            syncData(false);
+        });
+
+        /**
+         * Configurazione eventi input e scorciatoie
+         */
+        function setupEventListeners() {
+            // Ricerca istantanea con leggero debounce (60ms) per performance ottimali su migliaia di righe
+            let debounceTimer;
+            searchInput.addEventListener('input', (e) => {
+                searchQuery = e.target.value.trim();
+                clearSearchBtn.classList.toggle('hidden', searchQuery.length === 0);
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    applyFiltersAndRender();
+                }, 60);
+            });
+
+            // Chiusura modali con tasto ESC
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    closeDetailModal();
+                    closeConfigModal();
+                }
+            });
+        }
+
+        /**
+         * Recupera l'URL CSV attivo (da costante nel codice oppure salvato in localStorage)
+         */
+        function getActiveCsvUrl() {
+            if (GOOGLE_SHEET_CSV_URL && GOOGLE_SHEET_CSV_URL.trim() !== "") {
+                return GOOGLE_SHEET_CSV_URL.trim();
+            }
+            return localStorage.getItem('stock_app_csv_url') || "";
+        }
+
+        /**
+         * Sincronizza i dati dalla sorgente configurata (Google Sheet CSV o Demo)
+         */
+        async function syncData(showFeedback = true) {
+            const syncIcon = document.getElementById('sync-icon');
+            syncIcon.classList.add('animate-spin');
+
+            const activeUrl = getActiveCsvUrl();
+
+            if (activeUrl) {
+                // Caricamento reale da Google Sheet CSV
+                demoBanner.classList.add('hidden');
+                sourceIndicator.textContent = "Sorgente: Google Fogli Live";
+                document.getElementById('csv-url-input').value = activeUrl;
+
+                try {
+                    // Aggiungiamo un parametro anti-cache per ottenere sempre i dati più recenti
+                    const cacheBuster = (activeUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
+                    const response = await fetch(activeUrl + cacheBuster);
+                    if (!response.ok) throw new Error("Errore nel download del CSV");
+                    const csvText = await response.text();
+
+                    Papa.parse(csvText, {
+                        header: true,
+                        skipEmptyLines: true,
+                        complete: function(results) {
+                            allProducts = normalizeRows(results.data);
+                            updateSyncTimestamp();
+                            applyFiltersAndRender();
+                            syncIcon.classList.remove('animate-spin');
+                            if (showFeedback) showToast(`Sincronizzati ${allProducts.length} articoli`);
+                        },
+                        error: function(err) {
+                            console.error("Errore PapaParse:", err);
+                            syncIcon.classList.remove('animate-spin');
+                            showToast("Errore nella lettura del CSV", true);
+                        }
+                    });
+                } catch (error) {
+                    console.error("Errore fetch CSV:", error);
+                    syncIcon.classList.remove('animate-spin');
+                    showToast("Impossibile raggiungere il Google Sheet", true);
+                }
+            } else {
+                // Caricamento Dataset Demo realistico (3.200 prodotti)
+                setTimeout(() => {
+                    allProducts = generateDemoCatalog(3200);
+                    demoBanner.classList.remove('hidden');
+                    sourceIndicator.textContent = "Sorgente: Catalogo Demo";
+                    updateSyncTimestamp();
+                    applyFiltersAndRender();
+                    syncIcon.classList.remove('animate-spin');
+                    if (showFeedback) showToast("Catalogo demo aggiornato");
+                }, 250);
+            }
+        }
+
+        /**
+         * Normalizza le colonne del CSV/Excel indipendentemente da maiuscole o nomi leggermente diversi
+         */
+        function normalizeRows(rows) {
+            return rows.map((row, idx) => {
+                // Mappa chiavi case-insensitive
+                const keys = Object.keys(row);
+                const findVal = (candidates) => {
+                    for (const cand of candidates) {
+                        const foundKey = keys.find(k => k.trim().toLowerCase() === cand.toLowerCase());
+                        if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null) {
+                            return String(row[foundKey]).trim();
+                        }
+                    }
+                    return "";
+                };
+
+                const code = findVal(['Codice', 'Codice Prodotto', 'Code', 'SKU', 'Articolo']) || `ART-${1000 + idx}`;
+                const desc = findVal(['Descrizione', 'Descrizione Prodotto', 'Description', 'Nome', 'Prodotto']) || 'Articolo senza descrizione';
+                const rawQty = findVal(['Giacenza', 'Stock', 'Stock Disponibile', 'Quantita', 'Quantità', 'Qta', 'Qty']);
+                const qty = parseInt(rawQty.replace(/[^0-9-]/g, ''), 10);
+                const unit = findVal(['Unita_Misura', 'Unita', 'Unità', 'UM', 'U.M.']) || 'PZ';
+                const image = findVal(['Foto_URL', 'Immagine', 'Foto', 'Image', 'URL']);
+
+                return {
+                    code,
+                    desc,
+                    qty: isNaN(qty) ? 0 : qty,
+                    unit,
+                    image,
+                    // Stringa pre-indicizzata in minuscolo per ricerche fulminee
+                    _searchStr: (code + ' ' + desc).toLowerCase()
+                };
+            }).filter(item => item.code !== "" || item.desc !== "");
+        }
+
+        /**
+         * Genera 3.200 articoli realistici per testare subito prestazioni e UI
+         */
+        function generateDemoCatalog(count) {
+            const items = [
+                { code: "ART-20419", desc: "Cavo in rame isolato FG16OR16 2x1.5mm bobina", qty: 150, unit: "MT" },
+                { code: "ART-05912", desc: "Guarnizione industriale O-Ring Viton 50mm alta temperatura", qty: 8, unit: "PZ" },
+                { code: "ART-11044", desc: "Interruttore magnetotermico modulare 16A 2P curva C", qty: 0, unit: "PZ" },
+                { code: "ART-30891", desc: "Valvola a sfera in ottone cromato 1/2 pollice passaggio totale", qty: 42, unit: "PZ" },
+                { code: "ART-44120", desc: "Cuscinetto a sfere schermato 6204-2RS acciaio inox", qty: 4, unit: "PZ" },
+                { code: "ART-18750", desc: "Sensore induttivo di prossimità M12 PNP NO 24VDC", qty: 27, unit: "PZ" },
+                { code: "ART-90211", desc: "Tubo flessibile pneumatico poliuretano 8x6mm blu", qty: 310, unit: "MT" },
+                { code: "ART-61504", desc: "Filtro aria regolatore lubrificatore 1/4 con manometro", qty: 0, unit: "PZ" }
+            ];
+
+            const prefixes = ["ART", "RIC", "IND", "EL", "MEC", "IDR"];
+            const nouns = [
+                "Raccordo rapido diritto", "Morsettiera componibile", "Relè ausiliario 24V",
+                "Vite a testa cilindrica M8x30", "Staffa di fissaggio zincata", "Guaina spiralata autoestinguente",
+                "Pressacavo metrico IP68", "Fusibile rapido 10x38 10A", "Cinghia dentata passo 5mm",
+                "Manometro radiale 0-10 bar", "Elettrovalvola 5/2 monostabile", "Profilo strutturale alluminio 40x40"
+            ];
+            const specs = [
+                "serie pesante", "uso industriale", "confezione da 10", "certificato CE",
+                "acciaio AISI 316", "alta resistenza", "versione compatta", "ricambio originale"
+            ];
+
+            const result = items.map(i => ({
+                ...i,
+                image: "",
+                _searchStr: (i.code + ' ' + i.desc).toLowerCase()
+            }));
+
+            for (let i = result.length; i < count; i++) {
+                const pref = prefixes[i % prefixes.length];
+                const num = String(10000 + i);
+                const code = `${pref}-${num}`;
+                const noun = nouns[i % nouns.length];
+                const spec = specs[(i * 3) % specs.length];
+                const desc = `${noun} ${spec} mod. ${100 + (i % 899)}`;
+                
+                // Distribuzione realistica delle giacenze
+                let qty = 0;
+                const mod = i % 10;
+                if (mod === 0 || mod === 1) qty = 0; // 20% esauriti
+                else if (mod === 2 || mod === 3) qty = (i % 9) + 1; // 20% in esaurimento (1-9)
+                else qty = 15 + ((i * 17) % 240); // 60% disponibili
+
+                const unit = (i % 7 === 0) ? "MT" : ((i % 11 === 0) ? "KG" : "PZ");
+
+                result.push({
+                    code,
+                    desc,
+                    qty,
+                    unit,
+                    image: "",
+                    _searchStr: (code + ' ' + desc).toLowerCase()
+                });
+            }
+            return result;
+        }
+
+        /**
+         * Filtra l'array in memoria e avvia il rendering
+         */
+        function applyFiltersAndRender() {
+            const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+
+            filteredProducts = allProducts.filter(item => {
+                // 1. Filtro stato giacenza
+                if (currentFilter === 'available' && item.qty <= 10) return false;
+                if (currentFilter === 'low' && (item.qty < 1 || item.qty > 10)) return false;
+                if (currentFilter === 'out' && item.qty !== 0) return false;
+
+                // 2. Ricerca testuale multi-termine (AND logico su codice + descrizione)
+                if (terms.length > 0) {
+                    for (let i = 0; i < terms.length; i++) {
+                        if (!item._searchStr.includes(terms[i])) return false;
+                    }
+                }
+                return true;
+            });
+
+            totalCountBadge.textContent = `${allProducts.length.toLocaleString('it-IT')} articoli`;
+            
+            // Reset lista e render primo blocco
+            productListEl.innerHTML = '';
+            renderedCount = 0;
+
+            if (filteredProducts.length === 0) {
+                emptyStateEl.classList.remove('hidden');
+                loadMoreContainer.classList.add('hidden');
+                resultsInfoEl.textContent = '0 risultati trovati';
+            } else {
+                emptyStateEl.classList.add('hidden');
+                loadMoreItems();
+            }
+        }
+
+        /**
+         * Renderizza il blocco successivo di card (mantiene il DOM leggero e veloce)
+         */
+        function loadMoreItems() {
+            const nextBatch = filteredProducts.slice(renderedCount, renderedCount + PAGE_SIZE);
+            const fragment = document.createDocumentFragment();
+
+            nextBatch.forEach((item) => {
+                const card = createProductCard(item);
+                fragment.appendChild(card);
+            });
+
+            productListEl.appendChild(fragment);
+            renderedCount += nextBatch.length;
+
+            resultsInfoEl.textContent = `Visualizzati ${renderedCount.toLocaleString('it-IT')} di ${filteredProducts.length.toLocaleString('it-IT')} articoli`;
+
+            if (renderedCount < filteredProducts.length) {
+                loadMoreContainer.classList.remove('hidden');
+            } else {
+                loadMoreContainer.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Crea la singola card in stile Glide List
+         */
+        function createProductCard(item) {
+            const status = getStockStatus(item.qty, item.unit);
+            const card = document.createElement('div');
+            card.className = "bg-white rounded-2xl p-3.5 shadow-[0_1px_3px_rgba(15,23,42,0.06)] border border-slate-200/70 hover:border-slate-300 active:scale-[0.99] transition cursor-pointer flex items-center justify-between gap-3";
+            card.onclick = () => openDetailModal(item);
+
+            // Miniatura immagine opzionale
+            const imgHtml = item.image 
+                ? `<img src="${escapeHtml(item.image)}" alt="" class="w-11 h-11 rounded-xl object-cover bg-slate-100 shrink-0 border border-slate-200" onerror="this.style.display='none'">` 
+                : '';
+
+            card.innerHTML = `
+                <div class="flex items-center gap-3 min-w-0 flex-1">
+                    ${imgHtml}
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-bold text-slate-900 tracking-tight truncate">${escapeHtml(item.code)}</div>
+                        <div class="text-xs text-slate-500 line-clamp-2 mt-0.5 leading-snug">${escapeHtml(item.desc)}</div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${status.badgeClass}">
+                        <span class="w-2 h-2 rounded-full ${status.dotClass}"></span>
+                        ${status.shortLabel}
+                    </span>
+                    <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                    </svg>
+                </div>
+            `;
+            return card;
+        }
+
+        /**
+         * Restituisce stili e testi in base alla quantità disponibile
+         */
+        function getStockStatus(qty, unit) {
+            if (qty > 10) {
+                return {
+                    shortLabel: `Disp: ${qty} ${unit}`,
+                    fullLabel: 'Disponibile in magazzino',
+                    badgeClass: 'bg-emerald-50 text-emerald-700 border border-emerald-200/70',
+                    dotClass: 'bg-emerald-500'
+                };
+            } else if (qty >= 1) {
+                return {
+                    shortLabel: `In esaurim.: ${qty} ${unit}`,
+                    fullLabel: 'Scorta limitata / In esaurimento',
+                    badgeClass: 'bg-amber-50 text-amber-700 border border-amber-200/70',
+                    dotClass: 'bg-amber-500'
+                };
+            } else {
+                return {
+                    shortLabel: `Esaurito: 0 ${unit}`,
+                    fullLabel: 'Non disponibile (Stock 0)',
+                    badgeClass: 'bg-rose-50 text-rose-700 border border-rose-200/70',
+                    dotClass: 'bg-rose-500'
+                };
+            }
+        }
+
+        /**
+         * Gestione filtri a pillola
+         */
+        function setFilter(filterName) {
+            currentFilter = filterName;
+            document.querySelectorAll('.filter-pill').forEach(btn => {
+                const isActive = btn.dataset.filter === filterName;
+                if (isActive) {
+                    btn.className = "filter-pill active whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-semibold transition bg-[#1E3A5F] text-white shadow-sm flex items-center gap-1.5";
+                } else {
+                    btn.className = "filter-pill whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-medium transition bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5";
+                }
+            });
+            applyFiltersAndRender();
+        }
+
+        function clearSearch() {
+            searchInput.value = '';
+            searchQuery = '';
+            clearSearchBtn.classList.add('hidden');
+            searchInput.focus();
+            applyFiltersAndRender();
+        }
+
+        function resetAllFilters() {
+            clearSearch();
+            setFilter('all');
+        }
+
+        /**
+         * Apertura e chiusura modale dettaglio prodotto
+         */
+        function openDetailModal(item) {
+            selectedProduct = item;
+            const status = getStockStatus(item.qty, item.unit);
+
+            document.getElementById('modal-code').textContent = item.code;
+            document.getElementById('modal-desc').textContent = item.desc;
+            document.getElementById('modal-qty').textContent = item.qty.toLocaleString('it-IT');
+            document.getElementById('modal-unit').textContent = item.unit;
+
+            const statusBadge = document.getElementById('modal-status-badge');
+            statusBadge.className = `mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold w-fit ${status.badgeClass}`;
+            statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full ${status.dotClass}"></span><span>${status.fullLabel}</span>`;
+
+            const imgWrapper = document.getElementById('modal-image-wrapper');
+            const imgEl = document.getElementById('modal-image');
+            if (item.image) {
+                imgEl.src = item.image;
+                imgWrapper.classList.remove('hidden');
+            } else {
+                imgWrapper.classList.add('hidden');
+            }
+
+            document.getElementById('detail-modal').classList.remove('hidden');
+        }
+
+        function closeDetailModal() {
+            document.getElementById('detail-modal').classList.add('hidden');
+        }
+
+        /**
+         * Copia codice prodotto negli appunti (compatibile anche con iframe)
+         */
+        function copyProductCode() {
+            if (!selectedProduct) return;
+            const textToCopy = selectedProduct.code;
+            const tempInput = document.createElement('textarea');
+            tempInput.value = textToCopy;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            try {
+                document.execCommand('copy');
+                showToast(`Codice "${textToCopy}" copiato!`);
+            } catch (err) {
+                showToast("Impossibile copiare il codice", true);
+            }
+            document.body.removeChild(tempInput);
+        }
+
+        /**
+         * Gestione Modale di Configurazione Sorgente Dati
+         */
+        function openConfigModal() {
+            document.getElementById('csv-url-input').value = getActiveCsvUrl();
+            document.getElementById('config-modal').classList.remove('hidden');
+        }
+
+        function closeConfigModal() {
+            document.getElementById('config-modal').classList.add('hidden');
+        }
+
+        function saveCsvUrl() {
+            const url = document.getElementById('csv-url-input').value.trim();
+            if (!url) {
+                showToast("Inserisci un URL CSV valido", true);
+                return;
+            }
+            localStorage.setItem('stock_app_csv_url', url);
+            closeConfigModal();
+            syncData(true);
+        }
+
+        /**
+         * Caricamento diretto di file Excel (.xlsx/.xls) o CSV dal computer/telefono
+         */
+        function handleLocalFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const fileName = file.name.toLowerCase();
+            const reader = new FileReader();
+
+            if (fileName.endsWith('.csv')) {
+                reader.onload = function(e) {
+                    Papa.parse(e.target.result, {
+                        header: true,
+                        skipEmptyLines: true,
+                        complete: function(results) {
+                            allProducts = normalizeRows(results.data);
+                            demoBanner.classList.add('hidden');
+                            sourceIndicator.textContent = `File: ${file.name}`;
+                            updateSyncTimestamp();
+                            applyFiltersAndRender();
+                            closeConfigModal();
+                            showToast(`Caricati ${allProducts.length} articoli da CSV`);
+                        }
+                    });
+                };
+                reader.readAsText(file);
+            } else {
+                // File Excel (.xlsx / .xls) tramite SheetJS
+                reader.onload = function(e) {
+                    try {
+                        const data = new Uint8Array(e.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+                        allProducts = normalizeRows(jsonRows);
+                        demoBanner.classList.add('hidden');
+                        sourceIndicator.textContent = `File: ${file.name}`;
+                        updateSyncTimestamp();
+                        applyFiltersAndRender();
+                        closeConfigModal();
+                        showToast(`Caricati ${allProducts.length} articoli da Excel`);
+                    } catch (err) {
+                        console.error(err);
+                        showToast("Errore nella lettura del file Excel", true);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }
+            event.target.value = '';
+        }
+
+        function resetToDemo() {
+            localStorage.removeItem('stock_app_csv_url');
+            document.getElementById('csv-url-input').value = '';
+            closeConfigModal();
+            syncData(true);
+        }
+
+        function updateSyncTimestamp() {
+            const now = new Date();
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            lastSyncLabel.textContent = `• Agg. ${hh}:${mm}`;
+        }
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-msg');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMsg.textContent = message;
+            toastIcon.className = isError ? "w-2 h-2 rounded-full bg-rose-400" : "w-2 h-2 rounded-full bg-emerald-400";
+            
+            toast.classList.remove('opacity-0');
+            clearTimeout(window._toastTimeout);
+            window._toastTimeout = setTimeout(() => {
+                toast.classList.add('opacity-0');
+            }, 2600);
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+    </script>
+</body>
+</html>
